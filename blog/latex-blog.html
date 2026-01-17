@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>A post with LaTeX - Ben Helyer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;1,9..40,400&display=swap" rel="stylesheet">
+  <link href="../styles.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" rel="stylesheet">
+  <script>
+    (function(){var k='benhelyer-theme';var s;try{s=localStorage.getItem(k);}catch(e){}var d=document.documentElement;if(s==='dark'||s==='light')d.setAttribute('data-theme',s);else d.setAttribute('data-theme',window.matchMedia&&window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');})();
+  </script>
+  <style>
+    .article .back-link { margin-bottom: 1.5rem; font-size: 0.9375rem; display: inline-block; }
+    .article h1 { font-family: var(--font-heading); font-weight: 700; font-size: clamp(1.75rem, 4vw, 2.25rem); letter-spacing: -0.02em; margin: 0 0 0.5rem; color: var(--text); }
+    .article .meta { color: var(--text-muted); font-size: 0.9375rem; margin-bottom: 1.5rem; }
+    .article .body p { margin: 0 0 1rem; color: var(--text); }
+    .article .body p:last-child { margin-bottom: 0; }
+    .article .body .katex-display { margin: 1rem 0; overflow-x: auto; overflow-y: hidden; }
+    .article .body .katex { color: var(--text); }
+  </style>
+</head>
+<body>
+  <button class="theme-toggle" id="theme-toggle" aria-label="Toggle dark/light mode" title="Toggle dark/light mode">
+    <span id="theme-icon">&#9728;</span>
+  </button>
+
+  <div class="wrap">
+    <article class="article">
+      <a href="../index.html" class="back-link">Back to home</a>
+      <h1>A post with LaTeX</h1>
+      <p class="meta">Rendered with KaTeX</p>
+      <div class="body">
+        <p>This post uses <a href="https://katex.org/" target="_blank" rel="noopener">KaTeX</a> to render LaTeX in the browser. Inline math uses single dollar signs, e.g. Einstein's \( E = mc^2 \), or the Pythagorean identity \( a^2 + b^2 = c^2 \).</p>
+        <p>Display equations use double dollars. The quadratic formula:</p>
+        <p>$$x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}$$</p>
+        <p>The Gaussian integral is a classic:</p>
+        <p>$$\int_{-\infty}^{\infty} e^{-x^2} \, dx = \sqrt{\pi}$$</p>
+        <p>You can also use LaTeX-style delimiters: \( \sum_{n=1}^{\infty} \frac{1}{n^2} = \frac{\pi^2}{6} \) inline, or \[ \nabla \times \mathbf{E} = -\frac{\partial \mathbf{B}}{\partial t} \] for display.</p>
+      </div>
+    </article>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+  <script>
+    document.addEventListener("DOMContentLoaded", function() {
+      renderMathInElement(document.body, {
+        delimiters: [
+          {left: "$$", right: "$$", display: true},
+          {left: "$", right: "$", display: false},
+          {left: "\\[", right: "\\]", display: true},
+          {left: "\\(", right: "\\)", display: false}
+        ],
+        throwOnError: false
+      });
+    });
+  </script>
+  <script>
+    (function() {
+      var STORAGE_KEY = 'benhelyer-theme';
+      var html = document.documentElement;
+      var btn = document.getElementById('theme-toggle');
+      var icon = document.getElementById('theme-icon');
+
+      function setTheme(mode) {
+        html.setAttribute('data-theme', mode);
+        if (icon) icon.textContent = mode === 'dark' ? '\u2600' : '\u263E';
+        try { localStorage.setItem(STORAGE_KEY, mode); } catch (e) {}
+      }
+
+      function cycle() {
+        var current = html.getAttribute('data-theme');
+        if (current === 'dark') setTheme('light');
+        else setTheme('dark');
+      }
+
+      (function init() {
+        var saved = null;
+        try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+        if (saved === 'dark' || saved === 'light') {
+          setTheme(saved);
+        } else {
+          var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          setTheme(prefersDark ? 'dark' : 'light');
+        }
+      })();
+
+      if (btn) btn.addEventListener('click', cycle);
+    })();
+  </script>
+</body>
+</html>
