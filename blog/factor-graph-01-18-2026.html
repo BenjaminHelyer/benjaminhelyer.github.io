@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Building a Factor‑Graph Simulator for Synthetic Data</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;1,9..40,400&display=swap" rel="stylesheet">
+  <link href="../styles.css" rel="stylesheet">
+  <script>
+    (function(){var k='benhelyer-theme';var s;try{s=localStorage.getItem(k);}catch(e){}var d=document.documentElement;if(s==='dark'||s==='light')d.setAttribute('data-theme',s);else d.setAttribute('data-theme',window.matchMedia&&window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');})();
+  </script>
+  <style>
+    .article .back-link { margin-bottom: 1.5rem; font-size: 0.9375rem; display: inline-block; }
+    .article h1 { font-family: var(--font-heading); font-weight: 700; font-size: clamp(1.75rem, 4vw, 2.25rem); letter-spacing: -0.02em; margin: 0 0 0.5rem; color: var(--text); }
+    .article .meta { color: var(--text-muted); font-size: 0.9375rem; margin-bottom: 1.5rem; }
+    .article .body p { margin: 0 0 1rem; color: var(--text); }
+    .article .body p:last-child { margin-bottom: 0; }
+    .article .body table { width: 100%; border-collapse: collapse; margin: 2rem 0; font-size: 0.875rem; }
+    .article .body table th { text-align: left; padding: 0.75rem; background-color: var(--bg-secondary); color: var(--text); font-weight: 600; border-bottom: 2px solid var(--border); }
+    .article .body table td { padding: 0.75rem; border-bottom: 1px solid var(--border); color: var(--text); }
+    .article .body table tr:hover { background-color: var(--bg-secondary); }
+    .article .body table tbody tr:last-child td { border-bottom: none; }
+    .article .body pre { background-color: var(--bg-secondary); border: 1px solid var(--border); border-radius: 4px; padding: 1rem; margin: 1.5rem 0; overflow-x: auto; }
+    .article .body code { font-family: 'Courier New', Courier, monospace; font-size: 0.875rem; color: var(--text); }
+    .article .body pre code { display: block; white-space: pre; }
+    @media (max-width: 768px) {
+      .article .body table { font-size: 0.75rem; }
+      .article .body table th,
+      .article .body table td { padding: 0.5rem; }
+      .article .body code { font-size: 0.75rem; }
+    }
+  </style>
+</head>
+<body>
+  <button class="theme-toggle" id="theme-toggle" aria-label="Toggle dark/light mode" title="Toggle dark/light mode">
+    <span id="theme-icon">&#9728;</span>
+  </button>
+
+  <div class="wrap">
+    <article class="article">
+      <a href="../index.html" class="back-link">Back to home</a>
+      <h1>Building a Factor‑Graph Simulator for Synthetic Data</h1>
+      <p class="meta">Overcoming a lack of flexible data</p>
+      <div class="body">
+        <p>
+          For some time, I've worked in and around data, and a problem for me has always been the lack of flexible data sources.
+        </p>
+    
+        <p>
+          Certainly, data abounds, particularly tabular data. However, I wanted a dependable way to have a source of data which I could
+          expand or contract at will (not limited to 100 rows and not TBs in scale), was sufficiently complex along a number of dimensions
+          (all columns not highly correlated), yet simple enough for me to understand (having to re-learn domain-specific idiosyncrasies
+          produces significant overhead, particularly when one is not interested in the domain itself but the behavior of the data).
+        </p>
+    
+        <p>
+          For this reason, I decided to try my hand at making synthetic data. And it has become a fulfilling journey in its own right.
+        </p>
+    
+        <p>
+          I ended up with something akin to synthetic tabular data which can scale up and down in terms of both size and complexity.
+          This has enabled me to explore both engineering and statistics while relying on the same data source. When I wish to focus solely
+          on engineering, I ease the complexity of the data and boost the record count. When I want to explore statistical methods, I make
+          the relationships between fields very subtle (and often unpredictable to myself, in a way I will discuss later), and turn down the
+          data size.
+        </p>
+
+        <p>
+          Below is an example of what I mean, just a raw sample of 5 records from my synthetic data generator:
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>city</th>
+              <th>species</th>
+              <th>profession</th>
+              <th>allegiance</th>
+              <th>gender</th>
+              <th>age</th>
+              <th>character_id</th>
+              <th>first_name</th>
+              <th>surname</th>
+              <th>planet</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Mos Espa</td>
+              <td>trandoshan</td>
+              <td>trader</td>
+              <td>Neutral</td>
+              <td>female</td>
+              <td>21.849529</td>
+              <td>CC-TRA-F-019bd3e8-a421-7000-8b2e-db539c988ea9</td>
+              <td>Mae</td>
+              <td>Rakren</td>
+              <td>Tatooine</td>
+            </tr>
+            <tr>
+              <td>Mos Eisley</td>
+              <td>human</td>
+              <td>homeless</td>
+              <td>Imperial</td>
+              <td>male</td>
+              <td>38.929574</td>
+              <td>CC-HUM-M-019bd3e8-a422-7000-97b9-0737061bc082</td>
+              <td>Aulin</td>
+              <td>Omaiix</td>
+              <td>Tatooine</td>
+            </tr>
+            <tr>
+              <td>Bestine</td>
+              <td>rodian</td>
+              <td>homeless</td>
+              <td>Neutral</td>
+              <td>male</td>
+              <td>47.639260</td>
+              <td>CC-ROD-M-019bd3e8-a424-7000-abd3-01ece9c7dd7a</td>
+              <td>Michris</td>
+              <td>Rbenley</td>
+              <td>Tatooine</td>
+            </tr>
+            <tr>
+              <td>Mos Espa</td>
+              <td>ithorian</td>
+              <td>beast master</td>
+              <td>Imperial</td>
+              <td>male</td>
+              <td>40.385728</td>
+              <td>CC-ITH-M-019bd3e8-a425-7000-9e1b-5e9b8f177501</td>
+              <td>Sulik</td>
+              <td>Korius</td>
+              <td>Tatooine</td>
+            </tr>
+            <tr>
+              <td>Mos Eisley</td>
+              <td>human</td>
+              <td>pilot</td>
+              <td>Imperial</td>
+              <td>female</td>
+              <td>62.275478</td>
+              <td>CC-HUM-F-019bd3e8-a426-7000-be8c-04f1d8e62250</td>
+              <td>Ace</td>
+              <td>Utor</td>
+              <td>Tatooine</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p>
+          You'll notice the UUID associated with each row and the 'Star Wars sounding' names.
+          What's less evident is that, under the hood, this can be produced via a config file
+          which can be made more or less complex at will.
+        </p>
+
+        <p>
+          The config file begins with a base set of probabilities for each record.
+          For this alone, we are merely 'rolling the dice' on each field and choosing one of several options
+          for each record independently.
+        </p>
+
+        <p>
+          Next, we add in factors to each option, which induces correlations on each field.
+          This is where we introduce the 'factor graph' -- each field is determined by certain factors
+          (think of them as higher level fields), and the fields in turn influence other fields.
+          Note that, in my tool, I imposed the constraint that factors must form a DAG, though there
+          would be other methods to handle potential cycles.
+        </p>
+
+        <p>
+          For example, we may start with cities, and move onto professions common in those cities.
+          Then, certain species may be more or less likely to take on a given profession.
+          Factors influence one another until the full row is specified.
+        </p>
+
+        <p>
+          I intend to expound more on the factor graph approach later, but for now,
+          see the example config below.
+        </p>
+
+        <pre><code>{
+    "base_probabilities_finite": {
+        "species": {
+            "human": 0.9,
+            "bothan": 0.1
+        },
+        "gender": {
+            "female": 0.50,
+            "male": 0.50
+        },
+        "allegiance": {
+            "Imperial": 0.25,
+            "Rebel": 0.25,
+            "Neutral": 0.5
+        },
+        "profession": {
+            "Jedi": 1.0
+        },
+        "city": {
+            "Mos Eisley": 1.0
+        }
+    },
+    "base_probabilities_distributions": {
+        "age": {
+            "type": "normal",
+            "mean": 30,
+            "std": 20
+        }
+    },
+    "factors": {
+        "city": {
+            "species": {
+                "Mos Eisley": {
+                    "bothan": 1.1
+                }
+            },
+            "allegiance": {
+                "Mos Eisley": {
+                    "Imperial": 5.0,
+                    "Rebel": 0.25
+                }
+            }
+        },
+        "species": {
+            "allegiance": {
+                "bothan": {
+                    "Imperial": 2.5,
+                    "Rebel": 0.1
+                }
+            }
+        }
+    },
+    "metadata": {
+        "planet": "Tatooine"
+    }
+}</code></pre>
+
+      <p>
+        Hopefully you can see at a high level how this approach gets us statistical 'surprises' quite easily.
+        This is how we scale up or down the statistical complexity of the data.
+      </p>
+
+      <p>
+        As for the engineering complexity (i.e., the sheer record count), we can do this via multiprocessing
+        on a single machine, as this problem is CPU-bound (given that we want to perform random draws for each row
+        to preserve non-determinism). 
+      </p>
+
+      <p>
+        Python's multiprocessing libraries handle this fairly well. Crucially, we must take care to give each
+        process a separate seed for random number generation,
+        else we run the risk of separate processes producing the same character. However, the multiprocess
+        code is still short; here is a dummy example:
+      </p>
+
+      <pre>
+        <code>
+def create_character_with_seed(seed):
+    random.seed(seed)
+    return create_character(config)
+
+seeds = [BASE_SEED + i for i in range(POP_SIZE)]
+
+with Pool(processes=NUM_CORES) as pool:
+    characters = list(pool.imap(create_character_with_seed, seeds))
+        </code>
+      </pre>
+
+      <p>
+        We could also throw this onto multiple EC2 instances, which I did by creating a few Terraform files
+        and then benchmarking the deployments on several node types. But that's for a separate post as well.
+      </p>
+      
+      <p>
+        Regardless, I hope this serves as a useful introductory post into this synthetic data tool.
+        It's been a helpful project for me to sharpen my data intuitions along several axes,
+        and I hope this exposition has proved enlightening.
+      </p>
+
+      </div>
+    </article>
+  </div>
+
+  <script>
+    (function() {
+      var STORAGE_KEY = 'benhelyer-theme';
+      var html = document.documentElement;
+      var btn = document.getElementById('theme-toggle');
+      var icon = document.getElementById('theme-icon');
+
+      function setTheme(mode) {
+        html.setAttribute('data-theme', mode);
+        if (icon) icon.textContent = mode === 'dark' ? '\u2600' : '\u263E';
+        try { localStorage.setItem(STORAGE_KEY, mode); } catch (e) {}
+      }
+
+      function cycle() {
+        var current = html.getAttribute('data-theme');
+        if (current === 'dark') setTheme('light');
+        else setTheme('dark');
+      }
+
+      (function init() {
+        var saved = null;
+        try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+        if (saved === 'dark' || saved === 'light') {
+          setTheme(saved);
+        } else {
+          var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          setTheme(prefersDark ? 'dark' : 'light');
+        }
+      })();
+
+      if (btn) btn.addEventListener('click', cycle);
+    })();
+  </script>
+</body>
+</html>
