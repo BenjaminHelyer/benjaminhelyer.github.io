@@ -54,6 +54,144 @@
         
         <img src="animals_in_forest_species_only.png" alt="Counting Animals in the Forest - bar chart showing counts of birds (37), foxes (23), and rabbits (40)">
         
+        <p>
+          If we were to want to generate samples of these animals, our configuration
+          would look something like the following:
+        </p>
+
+        <code><pre>
+{
+  "base_probabilities_finite": {
+      "species": {
+          "rabbit": 0.4,
+          "bird": 0.4,
+          "fox": 0.2
+      }
+  }
+}
+        </pre></code>
+
+        <p>
+          Suppose now we are interested in triaging their colors.
+          We might then assume color is independent, and write something like this.
+        </p>
+
+        <code>
+        <pre>
+{
+    "base_probabilities_finite": {
+        "species": {
+            "rabbit": 0.4,
+            "bird": 0.4,
+            "fox": 0.2
+        },
+        "color": {
+            "blue": 0.1,
+            "red": 0.1,
+            "white": 0.2,
+            "grey": 0.3,
+            "orange": 0.1,
+            "brown": 0.2
+        }
+    }
+}
+        </pre>
+        </code>
+
+        <p>
+          Looking at the overall distribution, we get the below. So far, so good.
+        </p>
+
+        <img src="colors_of_animals_naive_overall.png" alt="Counting Colors of Animals in the Forest with a Naive Distribution - bar chart">
+
+        <p>
+          Now let's look at only foxes.
+        </p>
+
+        <img src="fox_only_colors_naive.png" alt="Counting Colors of Only Foxes in the Forest with a Naive Distribution - bar chart">
+
+        <p>
+          Something is odd. We wouldn't expect fox colors to have this distribution, at least in the same forest.
+          Blue is particularly surprising, although blue foxes exist. Also, we have observed no orange colors among the foxes.
+        </p>
+
+        <p>
+          The problem is clearly in our setup. We assumed that the species distribution was independent
+          from the color distribution. This is where factors come in.
+        </p>
+
+        <p>
+          We fix the problem by adding in a factor into our configuration, like so:
+        </p>
+
+        <code>
+          <pre>
+{
+  "base_probabilities_finite": {
+      "species": {
+          "rabbit": 0.4,
+          "bird": 0.4,
+          "fox": 0.2
+      },
+      "color": {
+          "blue": 0.1,
+          "red": 0.1,
+          "white": 0.2,
+          "grey": 0.3,
+          "orange": 0.1,
+          "brown": 0.2
+      }
+  },
+  "base_probabilities_distributions": {
+      "age": {
+          "type": "truncated_normal",
+          "mean": 5,
+          "std": 2,
+          "lower": 0,
+          "upper": 15
+      }
+  },
+  "factors": {
+      "species": {
+          "color": {
+              "fox": {
+                  "orange": 10.0,
+                  "brown": 2.0,
+                  "blue": 0.001,
+                  "white": 0.05
+              }
+          }
+      }
+  }
+}
+          </pre>
+        </code>
+
+        <p>
+          For example, this factor increases the probability of seeing an orange fox by a factor of 10. 
+          Similarly, it decreases the probability of seeing a blue fox by 0.001.
+        </p>
+
+        <p>
+          The way to think about this is like so: suppose we draw a random animal, and it's a fox.
+          Then, what are the probabilities that we will observe the animal to have a given color?
+          Foxes are predominantly orange, so we increase the chances of seeing an orange fox by 10x.
+          Blue foxes are rare, so we decrease those chances by 0.001x. Then, we make the draw for the color.
+          It's very likely to be either orange or brown, given the above factors. And indeed, this is
+          what we get when we simulate the draw.
+        </p>
+
+        <img src="fox_only_colors_factors.png" alt="Counting Colors of Only Foxes in the Forest with a Distribution Influenced by Factors - bar chart">
+
+        <p>
+          So it's clear these factors are really helpful in modeling conditional distributions.
+          Note, however, that such factors are by no means elegant. You can very easiliy overshoot
+          or undershoot various subsets, depending on how your factors are manipulated (particularly
+          if you stack multiple factors on top of each other; more on this later). For now, though,
+          hopefully it's evident how factors are useful to us in generating samples from distinct
+          populations.
+        </p>
+
       </div>
     </article>
   </div>
