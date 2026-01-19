@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Building a Factor‑Graph Simulator for Synthetic Data</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;1,9..40,400&display=swap" rel="stylesheet">
+  <link href="../../styles.css" rel="stylesheet">
+  <script>
+    (function(){var k='benhelyer-theme';var s;try{s=localStorage.getItem(k);}catch(e){}var d=document.documentElement;if(s==='dark'||s==='light')d.setAttribute('data-theme',s);else d.setAttribute('data-theme',window.matchMedia&&window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');})();
+  </script>
+  <style>
+    .article .back-link { margin-bottom: 1.5rem; font-size: 0.9375rem; display: inline-block; }
+    .article h1 { font-family: var(--font-heading); font-weight: 700; font-size: clamp(1.75rem, 4vw, 2.25rem); letter-spacing: -0.02em; margin: 0 0 0.5rem; color: var(--text); }
+    .article .meta { color: var(--text-muted); font-size: 0.9375rem; margin-bottom: 1.5rem; }
+    .article .body p { margin: 0 0 1rem; color: var(--text); }
+    .article .body p:last-child { margin-bottom: 0; }
+    .article .body table { width: 100%; border-collapse: collapse; margin: 2rem 0; font-size: 0.875rem; }
+    .article .body table th { text-align: left; padding: 0.75rem; background-color: var(--bg-secondary); color: var(--text); font-weight: 600; border-bottom: 2px solid var(--border); }
+    .article .body table td { padding: 0.75rem; border-bottom: 1px solid var(--border); color: var(--text); }
+    .article .body table tr:hover { background-color: var(--bg-secondary); }
+    .article .body table tbody tr:last-child td { border-bottom: none; }
+    .article .body pre { background-color: var(--bg-secondary); border: 1px solid var(--border); border-radius: 4px; padding: 1rem; margin: 1.5rem 0; overflow-x: auto; }
+    .article .body code { font-family: 'Courier New', Courier, monospace; font-size: 0.875rem; color: var(--text); }
+    .article .body pre code { display: block; white-space: pre; }
+    .article .body img { max-width: 100%; height: auto; margin: 1.5rem 0; border-radius: 4px; }
+    @media (max-width: 768px) {
+      .article .body table { font-size: 0.75rem; }
+      .article .body table th,
+      .article .body table td { padding: 0.5rem; }
+      .article .body code { font-size: 0.75rem; }
+    }
+  </style>
+</head>
+<body>
+  <button class="theme-toggle" id="theme-toggle" aria-label="Toggle dark/light mode" title="Toggle dark/light mode">
+    <span id="theme-icon">&#9728;</span>
+  </button>
+
+  <div class="wrap">
+    <article class="article">
+      <a href="../../index.html" class="back-link">Back to home</a>
+      <h1>Diving Into The Factor Graph Approach</h1>
+      <p class="meta">An exposition on factor graphs</p>
+      <div class="body">
+        <p>
+          Suppose we begin with some finite distribution of a single variable.
+          For example, we might be interested in the number of birds,
+          number of rabbits, and number of foxes in a given forest. We then
+          sample, say, 100 animals, and get their distributions.
+        </p>
+        
+        <img src="animals_in_forest_species_only.png" alt="Counting Animals in the Forest - bar chart showing counts of birds (37), foxes (23), and rabbits (40)">
+        
+      </div>
+    </article>
+  </div>
+
+  <script>
+    (function() {
+      var STORAGE_KEY = 'benhelyer-theme';
+      var html = document.documentElement;
+      var btn = document.getElementById('theme-toggle');
+      var icon = document.getElementById('theme-icon');
+
+      function setTheme(mode) {
+        html.setAttribute('data-theme', mode);
+        if (icon) icon.textContent = mode === 'dark' ? '\u2600' : '\u263E';
+        try { localStorage.setItem(STORAGE_KEY, mode); } catch (e) {}
+      }
+
+      function cycle() {
+        var current = html.getAttribute('data-theme');
+        if (current === 'dark') setTheme('light');
+        else setTheme('dark');
+      }
+
+      (function init() {
+        var saved = null;
+        try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+        if (saved === 'dark' || saved === 'light') {
+          setTheme(saved);
+        } else {
+          var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          setTheme(prefersDark ? 'dark' : 'light');
+        }
+      })();
+
+      if (btn) btn.addEventListener('click', cycle);
+    })();
+  </script>
+</body>
+</html>
