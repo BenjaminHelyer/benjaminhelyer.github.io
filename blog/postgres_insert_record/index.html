@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Anatomy of a Postgres INSERT</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;1,9..40,400&display=swap" rel="stylesheet">
+  <link href="../../styles.css" rel="stylesheet">
+  <script>
+    (function(){var k='benhelyer-theme';var s;try{s=localStorage.getItem(k);}catch(e){}var d=document.documentElement;if(s==='dark'||s==='light')d.setAttribute('data-theme',s);else d.setAttribute('data-theme',window.matchMedia&&window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');})();
+  </script>
+  <style>
+    .article .back-link { margin-bottom: 1.5rem; font-size: 0.9375rem; display: inline-block; }
+    .article h1 { font-family: var(--font-heading); font-weight: 700; font-size: clamp(1.75rem, 4vw, 2.25rem); letter-spacing: -0.02em; margin: 0 0 0.5rem; color: var(--text); }
+    .article .body h2 { font-family: var(--font-heading); font-weight: 600; font-size: clamp(1.5rem, 3vw, 1.875rem); letter-spacing: -0.01em; margin: 2rem 0 1rem; color: var(--text); }
+    .article .body .references { margin-top: 3rem; padding-top: 2rem; border-top: 1px solid var(--border); }
+    .article .body .references h3 { font-family: var(--font-heading); font-weight: 600; font-size: 1.25rem; margin: 0 0 1rem; color: var(--text); }
+    .article .body .references ol { margin: 0; padding-left: 1.5rem; color: var(--text); }
+    .article .body .references li { margin-bottom: 0.5rem; }
+    .article .body .references a { color: var(--text); text-decoration: underline; }
+    .article .body .references a:hover { text-decoration: none; }
+    .article .meta { color: var(--text-muted); font-size: 0.9375rem; margin-bottom: 1.5rem; }
+    .article .body p { margin: 0 0 1rem; color: var(--text); }
+    .article .body p:last-child { margin-bottom: 0; }
+    .article .body table { width: 100%; border-collapse: collapse; margin: 2rem 0; font-size: 0.875rem; }
+    .article .body table th { text-align: left; padding: 0.75rem; background-color: var(--bg-secondary); color: var(--text); font-weight: 600; border-bottom: 2px solid var(--border); }
+    .article .body table td { padding: 0.75rem; border-bottom: 1px solid var(--border); color: var(--text); }
+    .article .body table tr:hover { background-color: var(--bg-secondary); }
+    .article .body table tbody tr:last-child td { border-bottom: none; }
+    .article .body pre { background-color: var(--bg-secondary); border: 1px solid var(--border); border-radius: 4px; padding: 1rem; margin: 1.5rem 0; overflow-x: auto; }
+    .article .body code { font-family: 'Courier New', Courier, monospace; font-size: 0.875rem; color: var(--text); }
+    .article .body pre code { display: block; white-space: pre; }
+    .article .body img { max-width: 100%; height: auto; margin: 1.5rem 0; border-radius: 4px; }
+    @media (max-width: 768px) {
+      .article .body table { font-size: 0.75rem; }
+      .article .body table th,
+      .article .body table td { padding: 0.5rem; }
+      .article .body code { font-size: 0.75rem; }
+    }
+  </style>
+</head>
+<body>
+  <button class="theme-toggle" id="theme-toggle" aria-label="Toggle dark/light mode" title="Toggle dark/light mode">
+    <span id="theme-icon">&#9728;</span>
+  </button>
+
+  <div class="wrap">
+    <article class="article">
+      <a href="../../index.html" class="back-link">Back to home</a>
+      <h1>Anatomy of a Postgres INSERT</h1>
+      <p class="meta">We look at buffers, the WAL, and query processing, with excerpts from Postgres logs.</p>
+      <div class="body">
+        <h2>1. INSERT from the Client's Perspective</h2>
+        <p>
+            Suppose we want to run an INSERT statement on Postgres. For now, we'll ignore the connection, and do this
+            on the Postgres instance itself (of course, this is a bad idea for a production DB!). It is, of course,
+            a simple query, amounting to merely this statement:
+        </p>
+
+        <pre><code>synthetic=# INSERT INTO characters (character_id, species, gender, age, first_name, surname, profession, city, allegiance, planet)
+VALUES ('002', 'Human', 'M', 30, 'Luke', 'Skywalker', 'Jedi', 'Anchorhead', 'Neutral', 'Tatooine');</code></pre>
+
+        <p>
+            And we get the corresponding success flag:
+        </p>
+
+        <pre><code>INSERT 0 1</code></pre>
+
+        <p>
+            We can then confirm that the row was actually inserted by running the following SELECT statement:
+        </p>
+
+        <pre><code>synthetic=# SELECT * FROM characters WHERE character_id = '002';</code></pre>
+
+        <p>
+            And we get the expected result set:
+        </p>
+
+        <pre><code> character_id | species | gender | age | first_name |  surname  | profession |    city    | allegiance |  planet  |         created_at         
+--------------+---------+--------+-----+------------+-----------+------------+------------+------------+----------+----------------------------
+ 002          | Human   | M      |  30 | Luke       | Skywalker | Jedi       | Anchorhead | Neutral    | Tatooine | 2026-01-24 18:56:40.349574
+(1 row)</code></pre>
+        <h2>2. One Layer Deeper: The Buffer Pool</h2>
+
+        OK, so we've done the INSERT. That's great. But what if we want to know more? Let's run the query with EXPLAIN, like so:
+
+        <pre><code>synthetic=# EXPLAIN(ANALYZE, BUFFERS, VERBOSE) INSERT INTO characters (character_id, species, gender, age, first_name, surname, profession, city, allegiance, planet)                                                                                             
+            VALUES ('002', 'Human', 'M', 30, 'Luke', 'Skywalker', 'Jedi', 'Anchorhead', 'Neutral', 'Tatooine');</code></pre>
+            
+            We get the following query plan:
+
+            <pre><code>
+                QUERY PLAN                                                                                                                                                                      
+                -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                Insert on public.characters  (cost=0.00..0.01 rows=0 width=0) (actual time=0.145..0.146 rows=0 loops=1)
+                Buffers: shared hit=6 dirtied=4
+                ->  Result  (cost=0.00..0.01 rows=1 width=3662) (actual time=0.009..0.009 rows=1 loops=1)
+                        Output: '002'::character varying(255), 'Human'::character varying(100), 'M'::character varying(50), 30, 'Luke'::character varying(255), 'Skywalker'::character varying(255), 'Jedi'::character varying(255), 'Anchorhead'::character varying(255), 'Neutral'::character varying(100), 'Tatooine'::character varying(255), CURRENT_TIMESTAMP
+                Query Identifier: -8379646172477950151
+                Planning Time: 0.481 ms
+                Execution Time: 0.189 ms
+                (7 rows)
+            </code></pre>
+
+            <p>
+                In this plan, we have the cost and time metrics, which would be more interesting if this were a more complex query.
+                We also see that the result is essentially a row of constants, plus a timestamp. 
+                There's also a query identifier (note: this appears to be consistent across various invocations of EXPLAIN...INSERT,
+                indicating this is a query hash / fingerprint, rather than an ID meant for auditing).
+                So, useful stuff, but nothing terribly interesting, since this is just a single INSERT.
+            </p>
+
+            <p>
+                But, there's an interesting line. What about the "buffers"? What does this line mean?
+            </p>
+            <pre><code>
+                Buffers: shared hit=6 dirtied=4
+            </code></pre>
+
+            <p>
+            Buffers<sup>(1)</sup> are the pages which Postgres is holding in-memory, so it doesn't have to waste resources on disk I/O. 
+             We see that we got a hit on 6 of them, meaning we didn't have to read anything from disk.
+            </p>
+
+            <p>
+            Let's look at this visually. On the left, we have pages in memory, and on the right, we have pages on disk.
+            Note that the pages in memory are a subset of the pages on disk. Initially, the pages on memory
+            match the pages on disk.
+            </p>
+            
+<pre><code>
+Memory (Buffers)    │     Disk (Pages)
+┌─────┐             │    ┌─────┐
+│  A  │             │    │  A  │
+└─────┘             │    └─────┘
+┌─────┐             │    ┌─────┐
+│  B  │             │    │  B  │
+└─────┘             │    └─────┘
+┌─────┐             │    ┌─────┐
+│  C  │             │    │  C  │
+└─────┘             │    └─────┘
+                    │    ┌─────┐
+                    │    │  D  │
+                    │    └─────┘
+                    │    ┌─────┐
+                    │    │  E  │
+                    │    └─────┘
+</code></pre>
+
+        <p>
+        Now, in-memory storage is scarce, so the buffer must be carefully managed by the database engine. 
+        As such, pages are routinely evicted from the in-memory buffer pool. In the case of a simple read,
+        where the page was cached but not modified, the engine can simply remove the page from the buffer
+        pool with no further action needed. 
+        </p>
+
+        <p>
+        For example, suppose we want to move page D into memory. In order to do so, we might need to
+        evict page B from memory. As the below three diagrams show, so long as B was not modified,
+        we can simply evict B from memory and move D into memory. No need to write B to disk, we just
+        free it's spot in memory.
+        </p>
+        
+<pre><code>
+Memory (Buffers)    │     Disk (Pages)
+┌─────┐             │    ┌─────┐
+│  A  │             │    │  A  │
+└─────┘             │    └─────┘
+┌─────┐             │    ┌─────┐
+│  B  │  <-- evict! │    │  B  │
+└─────┘             │    └─────┘
+┌─────┐             │    ┌─────┐
+│  C  │             │    │  C  │
+└─────┘             │    └─────┘
+                    │    ┌─────┐
+                    │    │  D  │
+                    │    └─────┘
+                    │    ┌─────┐
+                    │    │  E  │
+                    │    └─────┘
+</code></pre>
+
+<pre><code>
+Memory (Buffers)    │     Disk (Pages)
+┌─────┐             │    ┌─────┐
+│  A  │             │    │  A  │
+└─────┘             │    └─────┘
+┌─────┐             │    ┌─────┐
+│  C  │             │    │  B  │
+└─────┘             │    └─────┘
+                    │    ┌─────┐
+                    │    │  C  │
+                    │    └─────┘
+                    │    ┌─────┐
+                 <--│--  │  D  │ bring in memory!
+                    │    └─────┘
+                    │    ┌─────┐
+                    │    │  E  │
+                    │    └─────┘
+</code></pre>
+
+<pre><code>
+Memory (Buffers)    │     Disk (Pages)
+┌─────┐             │    ┌─────┐
+│  A  │             │    │  A  │
+└─────┘             │    └─────┘
+┌─────┐             │    ┌─────┐
+│  C  │             │    │  B  │
+└─────┘             │    └─────┘
+┌─────┐             │    ┌─────┐
+│  D  │ D is cached │    │  C  │
+└─────┘             │    └─────┘
+                    │    ┌─────┐
+                    │    │  D  │
+                    │    └─────┘
+                    │    ┌─────┐
+                    │    │  E  │
+                    │    └─────┘
+</code></pre>
+        <p>
+        However, in the case of modified data, such as our INSERT,
+        the updated page must be later written back to disk. This is because the copy of the page in memory
+        no longer matches the copy of the page on the disk. In this case, the engine marks the page with a
+        'dirty' flag, indicating that, at some point, the page must be flushed back to disk.
+        </p>
+
+        <p>
+        For example, suppose we ran an INSERT and it appended a row to page A. Now,
+        page A is modified, call it A', and the copy of A on disk no longer matches 
+        the page A' in memory. As such, the dirty flag on A' is set.
+        </p>
+
+<pre><code>
+Memory (Buffers)    │     Disk (Pages)
+┌─────┐             │    ┌─────┐
+│  A' │  <-- dirty! │    │  A  │
+└─────┘             │    └─────┘
+┌─────┐             │    ┌─────┐
+│  C  │             │    │  B  │
+└─────┘             │    └─────┘
+┌─────┐             │    ┌─────┐
+│  D  │             │    │  C  │
+└─────┘             │    └─────┘
+                    │    ┌─────┐
+                    │    │  D  │
+                    │    └─────┘
+                    │    ┌─────┐
+                    │    │  E  │
+                    │    └─────┘
+</code></pre>
+
+        <p>
+        Continuing the example, suppose we wish to bring page E into memory,
+        and we want to also keep pages C and D in-memory. Page A' must then be flushed
+        to disk, not simply evicted, before page E can be brought in.
+        </p>
+
+<pre><code>
+Memory (Buffers)    │     Disk (Pages)
+┌─────┐             │    ┌─────┐
+│  A' │  <-- flush! │    │  A  │
+└─────┘      │      │    └─────┘
+             V      │          ^
+             V      |          ^
+             └────>─|─>────────┘
+                    │
+                    |
+┌─────┐             │    ┌─────┐
+│  C  │             │    │  B  │
+└─────┘             │    └─────┘
+┌─────┐             │    ┌─────┐
+│  D  │             │    │  C  │
+└─────┘             │    └─────┘
+                    │    ┌─────┐
+                    │    │  D  │
+                    │    └─────┘
+                    │    ┌─────┐
+                    │    │  E  │
+                    │    └─────┘
+</code></pre>
+
+<pre><code>
+Memory (Buffers)    │     Disk (Pages)
+┌─────┐             │    ┌─────┐
+│  A' │  <-- evict! │    │  A' │ A' now on disk
+└─────┘             │    └─────┘
+┌─────┐             │    ┌─────┐
+│  C  │             │    │  B  │
+└─────┘             │    └─────┘
+┌─────┐             │    ┌─────┐
+│  D  │             │    │  C  │
+└─────┘             │    └─────┘
+                    │    ┌─────┐
+                    │    │  D  │
+                    │    └─────┘
+                    │    ┌─────┐
+                    │    │  E  │
+                    │    └─────┘
+</code></pre>
+
+<pre><code>
+Memory (Buffers)    │     Disk (Pages)
+┌─────┐             │    ┌─────┐
+│  C  │             │    │  A' │
+└─────┘             │    └─────┘
+┌─────┐             │    ┌─────┐
+│  D  │             │    │  B  │
+└─────┘             │    └─────┘
+                    │    ┌─────┐
+                    │    │  C  │
+                    │    └─────┘
+                    │    ┌─────┐
+                    │    │  D  │
+                    │    └─────┘
+                    │    ┌─────┐
+                 <--│--  │  E  │ bring in memory!
+                    │    └─────┘
+</code></pre>
+
+<pre><code>
+Memory (Buffers)    │     Disk (Pages)
+┌─────┐             │    ┌─────┐
+│  C  │             │    │  A' │
+└─────┘             │    └─────┘
+┌─────┐             │    ┌─────┐
+│  D  │             │    │  B  │
+└─────┘             │    └─────┘
+┌─────┐             │    ┌─────┐
+│  E  │ E is cached │    │  C  │
+└─────┘             │    └─────┘
+                    │    ┌─────┐
+                    │    │  D  │
+                    │    └─────┘
+                    │    ┌─────┐
+                    │    │  E  │
+                    │    └─────┘
+</code></pre>
+
+        <p>
+            Now, in terms of actual implementation, in Postgres, each page is by default 8 KB<sup>(2)</sup>, 
+            and the buffer pool (controlled by the <code>shared_buffers</code> parameter) is by default 128 MB on most systems<sup>(3)</sup>. 
+            Of course, you can configure each of these two; these are design parameters for your system.
+        </p>
+
+        <h2>(3) What happens if we crash? The WAL!</h2>
+
+        <p>
+            The above is great in terms of efficiency: we write to disk only when we need to.
+            Specifically, we don't need to write all changes disk immediately upon every modification.
+            This is what enables Postgres to be useful for transactional use-cases, since we can batch
+            a large amount of changes together then flush them all to disk periodically.
+        </p>
+
+        <p>
+            But, what if we pull the plug after the page is modified in-memory, before we write to disk?
+            This is dangerous - first, we could of course lose the data of the INSERT. Second, and equally importantly in some scenarios,
+            a SELECT query could be run in the interval after the INSERT but before the crash, retrieving the record,
+            piping it downstream, and then preserving the new record into another database. As such,
+            we would have two inconsistent data stores, one with this record and one without this record.
+        </p>
+
+        <p>
+            Let's make this more concrete with an example. Suppose a Postgres database stores
+            transaction data for a bank, and Bob deposits $20 into his bank account. Immediately afterwards,
+            the record with Bob's deposit is piped to a downstream database which is read by the mobile app.
+            Bob thus sees $20 in his bank account on the mobile UI. However, suppose the transaction database
+            crashes before Bob's transaction could be flushed to disk. The database is soon restored. 
+        </p>
+
+        <pre><code>
+Day 1: Bob deposits $20
+
+  Bob     ┌────┐   Transaction DB              UI/Mobile DB
+   O      │$20 │   ┌──────────────┐            ┌──────────────┐
+  /|\     └────┘   │   Memory     │            │   Memory     │
+  / \  -------->   │ ┌──────────┐ │            │ ┌──────────┐ │
+                   │ │ Bob: $20 │ │            │ │ Bob: $0  │ │
+                   │ └──────────┘ │            │ └──────────┘ │
+                   │              │            │              │
+                   │   Disk       │            │   Disk       │
+                   │ ┌──────────┐ │            │ ┌──────────┐ │
+                   │ │ Bob: $0  │ │            │ │ Bob: $0  │ │
+                   │ └──────────┘ │            │ └──────────┘ │
+                   └──────────────┘            └──────────────┘
+                           │                            │
+                           │ INSERT $20                 │
+                           │ (in memory only)           │
+                           │                            │
+                           │  SELECT query              │
+                           └───────────────────────────>│
+                                                        │
+                                                        │ INSERT $20
+                                                        │ (written to disk)
+                                                        │
+                                                        │ ┌──────────┐ │
+                                                        │ │ Bob: $20 │ │
+                                                        │ └──────────┘ │
+                                                        │              │
+                                                        │ ┌──────────┐ │
+                                                        │ │ Bob: $20 │ │
+                                                        │ └──────────┘ │
+
+[CRASH!] Transaction DB restores from disk...
+
+              ┌──────────────┐            ┌──────────────┐
+              │   Memory     │            │   Memory     │
+              │ ┌──────────┐ │            │ ┌──────────┐ │
+              │ │          │ │            │ │ Bob: $20 │ │
+              │ └──────────┘ │            │ └──────────┘ │
+              │              │            │              │
+              │   Disk       │            │   Disk       │
+              │ ┌──────────┐ │            │ ┌──────────┐ │
+              │ │ Bob: $0  │ │  <-- Lost! │ │ Bob: $20 │ │  <-- Still here!
+              │ └──────────┘ │            │ └──────────┘ │
+              └──────────────┘            └──────────────┘
+</code></pre>
+
+        <p>
+            All is well and good until the next morning, when Bob attempts to purchase a $5 latte with his debit card. Given that his
+            original transaction was lost, his card is declined, his phone still displays a value of $20 in his account.
+            What a confusing state for poor Bob! He is turned away by the barista, and he must go without a latte for the day.
+        </p>
+
+        <pre><code>
+Day 2: Bob tries to buy a $5 latte
+
+  Bob          Transaction DB              UI/Mobile DB
+   O          ┌──────────────┐            ┌──────────────┐
+  /|\         │   Memory     │            │   Memory     │
+  / \         │ ┌──────────┐ │            │ ┌──────────┐ │
+              │ │          │ │            │ │ Bob: $20 │ │
+              │ └──────────┘ │            │ └──────────┘ │
+              │              │            │              │
+              │   Disk       │            │   Disk       │
+              │ ┌──────────┐ │            │ ┌──────────┐ │
+              │ │ Bob: $0  │ │            │ │ Bob: $20 │ │
+              │ └──────────┘ │            │ └──────────┘ │
+              └──────────────┘            └──────────────┘
+                    │                            │
+                    │  Check balance: $0         │
+                    │                            │
+                    │  "NO LATTE FOR YOU!"       │
+                    │                            │  Shows: $20
+                    |                            |  "BUT I HAVE $20!"
+                    │                            │  
+
+</code>></pre>
+
+        <p>
+            Thus, the exact efficiency which lead us to the seaparate copies on-disk and in-memory
+            leads us to consistency issues.
+        </p>
+
+        <p>
+            How does Postgres handle this? The answer is the
+            write-ahead log (WAL)<sup>(4)</sup>.
+        </p>
+
+        <p>
+            The WAL is a sequential log file that records all changes to the database before they 
+            are written to the data files. Postgres can more rapidly append to the WAL than it 
+            can append to all the various pages in memory, so this enables more efficient transactions 
+            while also maintaining durability.
+        </p>
+
+        <p>
+            Postgres does this in the following way: a transaction is considered committed when it is
+            appeneded to the WAL and the updated state of the WAL is flushed to disk. Thus, when
+            we perform an INSERT, Postgres will update the WAL and flush it to disk before committing
+            the transaction.
+        </p>
+
+        <p>
+            We can practically measure changes in the WAL by checking the WAL Log Sequence Number (LSN) 
+            before and after the INSERT. The LSN is a pointer to the end of the WAL; think of it like
+            a byte offset.
+        </p>
+
+        <p>
+            Before our INSERT, we see the pointer has one value:
+        </p>
+
+        <pre><code>synthetic=# SELECT pg_current_wal_lsn() AS before;
+ before   
+----------
+ 0/1967D28
+(1 row)</code></pre>
+
+        <p>
+            We perform our INSERT as usual:
+        </p>
+
+        <pre><code>synthetic=# INSERT INTO characters (character_id, species, gender, age, first_name, surname, profession, city, allegiance, planet)
+VALUES ('002', 'Human', 'M', 30, 'Luke', 'Skywalker', 'Jedi', 'Anchorhead', 'Neutral', 'Tatooine');
+INSERT 0 1</code></pre>
+
+        <p>
+            Now, after the INSERT, we see the pointer has a greater value:
+        </p>
+
+        <pre><code>synthetic=# SELECT pg_current_wal_lsn() AS after;
+  after   
+----------
+ 0/1968320
+(1 row)</code></pre>
+
+        <p>
+            This indicates information has been appended to the WAL, corresponding to the data in our INSERT.
+            We can calculate the difference between these two LSNs to see exactly how much WAL was generated by our INSERT:
+        </p>
+
+        <pre><code>synthetic=# SELECT pg_size_pretty(
+  pg_wal_lsn_diff('0/1968320'::pg_lsn, '0/1967D28'::pg_lsn)
+) AS wal_bytes;
+ wal_bytes  
+------------
+ 1528 bytes
+(1 row)</code></pre>
+
+        <p>
+            Thus, our single INSERT statement generated 1528 bytes of WAL. Why this big? Well, this WAL entry contains all the information needed to 
+            reconstruct the INSERT operation, including the table metadata, the row data, and transaction information. 
+        </p>
+
+        <h2>A Last Note on Query Processing</h2>
+
+        <p>
+            Before any of the above can actually take place, Postgres of course must understand our query as well.
+            This is again more interesting for complex queries: ours is merely an INSERT.
+            But the high level stages are the same for any query<sup>(5)</sup>:
+        <ol>
+          <li>Parse</li>
+          <li>Rewrite</li>
+          <li>Plan</li>
+          <li>Execute</li>
+        </ol>
+        </p>
+
+        <p>
+            To give a practical example, for our insert, we are essentially looking at statements like this:
+        </p>
+
+        <pre>
+        <code>
+city = 'Mos Espa'::varchar(255)
+        </code>
+        </pre>
+
+        <p>
+            Postgres produces a representation of the query which contains the above for each key.
+            These representations are quite long, and not really meant for humans. With that said,
+            for completeness, the above statement for that one field is represented by something like the below:
+        </p>
+
+        <p>
+        <code>
+{
+TARGETENTRY 
+    :expr 
+       {FUNCEXPR 
+       :funcid 669
+       :funcresulttype 1043 
+       :funcretset false 
+       :funcvariadic false 
+       :funcformat 2 
+       :funccollid 100 
+       :inputcollid 100 
+       :args (
+          {CONST
+          :consttype 1043 
+          :consttypmod -1 
+          :constcollid 100 
+          :constlen -1 
+          :constbyval false 
+          :constisnull false 
+          :location 127 
+          :constvalue 12 [ 48 0 0 0 77 111 115 32 69 115 112 97 ]
+          }
+          {CONST 
+          :consttype 23 
+          :consttypmod -1 
+          :constcollid 0 
+          :constlen 4 
+          :constbyval true 
+          :constisnull false 
+          :location -1 
+          :constvalue 4 [ 3 1 0 0 0 0 0 0 ]
+          }
+          {CONST 
+          :consttype 16 
+          :consttypmod -1 
+          :constcollid 0 
+          :constlen 1 
+          :constbyval true 
+          :constisnull false 
+          :location -1 
+          :constvalue 1 [ 0 0 0 0 0 0 0 0 ]
+          }
+       )
+       :location -1
+       }
+    :resno 8 
+    :resname city
+    :ressortgroupref 0 
+    :resorigtbl 0 
+    :resorigcol 0 
+    :resjunk false
+}
+        </code>
+        </p>
+
+        <p>
+            Some highlights of the above, in no particular order. First, we're applying a function, likely varchar(...), to our value:
+        </p>
+
+        <pre>
+            <code>
+FUNCEXPR 
+:funcid 669
+:funcresulttype 1043 
+:funcretset false 
+:funcvariadic false 
+:funcformat 2 
+:funccollid 100 
+:inputcollid 100 
+            </code>
+        </pre>
+
+        <p>
+            We see our field name, 'city', down at the bottom:
+        </p>
+
+        <pre>
+            <code>
+:resname city
+            </code>
+        </pre>
+
+        <p>
+            Looking carefully, we see the ASCII value for 'Mos Espa':
+        </p>
+
+        <pre>
+            <code>
+:constvalue 12 [ 48 0 0 0 77 111 115 32 69 115 112 97 ]
+            </code>
+        </pre>
+
+        <p>
+            And of course, as before, all of the above is a constant: we're inserting a known constant value into a field.
+        </p>
+
+        <h2>Summary</h2>
+
+        <p>
+            So, we've seen somet details of what happens in Postgres
+            when we run a simple INSERT statement. The buffer pool, WAL,
+            and query processing are involved with every INSERT. Of course,
+            when running multiple INSERTs, things get a more complicated,
+            and one also needs to consider concurrency problems.
+            With that said, the core ideas behind Postgres transactions
+            remain the same, and each of these components remain essential
+            when dealing with more complex situations.
+        </p>
+
+        <p>
+            All of the above are interesting and deep subjects in and of themselves.
+            The goal here was simply to give an overview to the question, 'What happens when
+            I run an INSERT on a Postgres database?' I hope it's been illuminating in that regard.
+        </p>
+
+        <div class="references">
+          <h3>References</h3>
+          <ol>
+            <li>
+              <a href="https://15445.courses.cs.cmu.edu/fall2024/notes/06-bufferpool.pdf" target="_blank" rel="noopener noreferrer">CMU 15-445: Buffer Pools</a>
+            </li>
+            <li>
+              <a href="https://www.postgresql.org/docs/current/storage.html" target="_blank" rel="noopener noreferrer">PostgreSQL Documentation: Database Physical Storage</a>
+            </li>
+            <li>
+              <a href="https://www.postgresql.org/docs/current/runtime-config-resource.html#GUC-SHARED-BUFFERS" target="_blank" rel="noopener noreferrer">PostgreSQL Documentation: shared_buffers Configuration</a>
+            </li>
+            <li>
+              <a href="https://www.postgresql.org/docs/current/wal-intro.html" target="_blank" rel="noopener noreferrer">PostgreSQL Documentation: WAL Introduction</a>
+            </li>
+            <li>
+              <a href="https://www.postgresql.org/docs/current/query-path.html" target="_blank" rel="noopener noreferrer">PostgreSQL Documentation: The Path of a Query</a>
+            </li>
+          </ol>
+        </div>
+
+      </div>
+    </article>
+  </div>
+
+  <script>
+    (function() {
+      var STORAGE_KEY = 'benhelyer-theme';
+      var html = document.documentElement;
+      var btn = document.getElementById('theme-toggle');
+      var icon = document.getElementById('theme-icon');
+
+      function setTheme(mode) {
+        html.setAttribute('data-theme', mode);
+        if (icon) icon.textContent = mode === 'dark' ? '\u2600' : '\u263E';
+        try { localStorage.setItem(STORAGE_KEY, mode); } catch (e) {}
+      }
+
+      function cycle() {
+        var current = html.getAttribute('data-theme');
+        if (current === 'dark') setTheme('light');
+        else setTheme('dark');
+      }
+
+      (function init() {
+        var saved = null;
+        try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+        if (saved === 'dark' || saved === 'light') {
+          setTheme(saved);
+        } else {
+          var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          setTheme(prefersDark ? 'dark' : 'light');
+        }
+      })();
+
+      if (btn) btn.addEventListener('click', cycle);
+    })();
+  </script>
+</body>
+</html>
