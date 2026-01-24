@@ -461,8 +461,14 @@ Day 2: Bob tries to buy a $5 latte
         <p>
             The WAL is a sequential log file that records all changes to the database before they 
             are written to the data files. Postgres can more rapidly append to the WAL than it 
-            can append to all the various pages in memory, so this enables more efficient transactions 
-            while also maintaining durability.
+            can append to all the various pages in memory, so this enables relatively efficient transactions 
+            while maintaining durability.
+        </p>
+
+        <p>
+          (Note: "efficient" is relative here. OpenAI, for example, has noted that they require 50
+          read replicas to have their WALs updated before committing a single transaction. This
+          is an ongoing problem in scaling their use of Postgres.)<sup>(6)</sup>
         </p>
 
         <p>
@@ -688,6 +694,9 @@ FUNCEXPR
             </li>
             <li>
               <a href="https://www.postgresql.org/docs/current/query-path.html" target="_blank" rel="noopener noreferrer">PostgreSQL Documentation: The Path of a Query</a>
+            </li>
+            <li>
+              <a href="https://openai.com/index/scaling-postgresql/" target="_blank" rel="noopener noreferrer">OpenAI on scaling PostgreSQL</a>
             </li>
           </ol>
         </div>
