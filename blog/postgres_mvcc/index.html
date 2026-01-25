@@ -218,6 +218,28 @@ synthetic=# SELECT n_live_tup, n_dead_tup FROM pg_stat_user_tables WHERE relname
             even though they aren't committed.
             </p>
 
+            <h2>Avoiding Uncommitted Transactions: The Commit Log (CLOG)</h2>
+
+            <p>
+            How do we then know to avoid an uncommitted transaction, if it
+            still adds a record in the buffer pool and quite possibly on disk?
+            The answer: we check the commit log (CLOG) before returning
+            the value of the row.
+            </p>
+
+            <p>
+            Essentially, the CLOG is a tiny, in-memory list that has bits
+            for every transaction. Commit? Flip a bit. Rollback? Flip a bit.
+            This makes commit and rollback fast.
+            </p>
+
+            <p>
+            The real overhead is all the dead tuples left around, which is
+            where VACUUM comes into play. If we don't VACUUM, we potentially
+            have many dead tuples left from rolled back changes, as well
+            deleted rows.
+            </p>
+
       </div>
     </article>
   </div>
