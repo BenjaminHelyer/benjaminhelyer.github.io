@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Exploring MVCC in Postgres</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;1,9..40,400&display=swap" rel="stylesheet">
+  <link href="../../styles.css" rel="stylesheet">
+  <script>
+    (function(){var k='benhelyer-theme';var s;try{s=localStorage.getItem(k);}catch(e){}var d=document.documentElement;if(s==='dark'||s==='light')d.setAttribute('data-theme',s);else d.setAttribute('data-theme',window.matchMedia&&window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');})();
+  </script>
+  <style>
+    .article .back-link { margin-bottom: 1.5rem; font-size: 0.9375rem; display: inline-block; }
+    .article h1 { font-family: var(--font-heading); font-weight: 700; font-size: clamp(1.75rem, 4vw, 2.25rem); letter-spacing: -0.02em; margin: 0 0 0.5rem; color: var(--text); }
+    .article .meta { color: var(--text-muted); font-size: 0.9375rem; margin-bottom: 1.5rem; }
+    .article .body p { margin: 0 0 1rem; color: var(--text); }
+    .article .body p:last-child { margin-bottom: 0; }
+    .article .body table { width: 100%; border-collapse: collapse; margin: 2rem 0; font-size: 0.875rem; }
+    .article .body table th { text-align: left; padding: 0.75rem; background-color: var(--bg-secondary); color: var(--text); font-weight: 600; border-bottom: 2px solid var(--border); }
+    .article .body table td { padding: 0.75rem; border-bottom: 1px solid var(--border); color: var(--text); }
+    .article .body table tr:hover { background-color: var(--bg-secondary); }
+    .article .body table tbody tr:last-child td { border-bottom: none; }
+    .article .body pre { background-color: var(--bg-secondary); border: 1px solid var(--border); border-radius: 4px; padding: 1rem; margin: 1.5rem 0; overflow-x: auto; }
+    .article .body code { font-family: 'Courier New', Courier, monospace; font-size: 0.875rem; color: var(--text); }
+    .article .body pre code { display: block; white-space: pre; }
+    @media (max-width: 768px) {
+      .article .body table { font-size: 0.75rem; }
+      .article .body table th,
+      .article .body table td { padding: 0.5rem; }
+      .article .body code { font-size: 0.75rem; }
+    }
+  </style>
+</head>
+<body>
+  <button class="theme-toggle" id="theme-toggle" aria-label="Toggle dark/light mode" title="Toggle dark/light mode">
+    <span id="theme-icon">&#9728;</span>
+  </button>
+
+  <div class="wrap">
+    <article class="article">
+      <a href="../../index.html" class="back-link">Back to home</a>
+      <h1>Exploring MVCC in Postgres</h1>
+      <p class="meta">What happens when you attempt multiple DMLs on the same row</p>
+      <div class="body">
+
+        <h2>Initial Example</h2>
+        <p>
+        We'll do this by opening up two Postgres sessions, Session A and Session B.
+        In Session A, we setup the table and run the following INSERT.
+        </p>
+
+        <div><strong>Session A</strong></div>
+        <pre><code>
+INSERT INTO characters (character_id, species, gender, age, first_name, surname, profession, city, allegiance, planet) VALUES ('c_002', 'Human', 'M', 30, 'Han', 'Solo', 'Smugger', 'Coronet', 'Neutral', 'Corellia');
+        </code></pre>
+
+        <p>
+        Next, we begin an update transaction, but do not commit, in Session A:
+        </p>
+
+        <div><strong>Session A</strong></div>
+        <pre><code>
+BEGIN;
+UPDATE characters SET age = 31 WHERE character_id = 'c_002';
+        </code></pre>
+
+        <p>
+        We get a response back confirming the update.
+        </p>
+
+        <div><strong>Session A</strong></div>
+        <pre><code>
+UPDATE 1
+        </code></pre>
+
+        <p>
+        Now let's go over to Session B and attempt to perform an update on the same row.
+        </p>
+
+        <div><strong>Session B</strong></div>
+        <pre><code>
+BEGIN;
+UPDATE characters SET age = 32 WHERE character_id = 'c_002';
+...
+        </code></pre>
+
+        <p>
+        The query will hang, and we'll have to cancel our query.
+        This is because Session A is modifying the same row.
+        </p>
+
+        <p>
+        Now suppose we're in Session B, don't know about Session A,
+        and still want to see what's up. We can use xmin and xmax
+        to get information about the current transaction versus upcoming
+        transactions. For example, we can run,
+        </p>
+
+        <div><strong>Session B</strong></div>
+        <pre><code>
+SELECT xmin, xmax, character_id, age FROM characters WHERE character_id = 'c_002';
+        </code></pre>
+
+        <p>
+        And we get a result like this:
+        </p>
+        
+        <div><strong>Session B</strong></div>
+        <pre><code>
+ xmin | xmax | character_id | age 
+------+------+--------------+-----
+  764 |  765 | c_002        |  30
+(1 row)
+        </code></pre>
+
+        <p>
+        This tells us that we are currently looking
+        at a record which is being updated in another
+        transaction. This makes sense, because we know
+        that Session A has a transaction open in which
+        we set age = 31, but we are still seeing
+        age = 30 in Session B.
+        </p>
+
+        <p>
+        Let's head back over to Session A and commit
+        the transaction.
+        </p>
+
+        <div><strong>Session A</strong></div>
+        <pre><code>
+COMMIT;
+        </code></pre>
+
+        <p>
+        And now, on Session B, let's run the same
+        SELECT query again.
+        </p>
+
+        <div><strong>Session B</strong></div>
+        <pre><code>
+SELECT xmin, xmax, character_id, age FROM characters WHERE character_id = 'c_002';
+        </code></pre>
+
+        <p>
+        We get the following result this time:
+        </p>
+
+        <div><strong>Session B</strong></div>
+        <pre><code>
+ xmin | xmax | character_id | age 
+------+------+--------------+-----
+  765 |    0 | c_002        |  31
+(1 row)
+        </code></pre>
+
+        <p>
+        So now we see age = 31, which was the value committed
+        by Session A, as well as an incremented xmin value.
+        The xmax value is now 0, as there are no open transactions
+        on the table.
+        </p>
+
+      </div>
+    </article>
+  </div>
+
+  <script>
+    (function() {
+      var STORAGE_KEY = 'benhelyer-theme';
+      var html = document.documentElement;
+      var btn = document.getElementById('theme-toggle');
+      var icon = document.getElementById('theme-icon');
+
+      function setTheme(mode) {
+        html.setAttribute('data-theme', mode);
+        if (icon) icon.textContent = mode === 'dark' ? '\u2600' : '\u263E';
+        try { localStorage.setItem(STORAGE_KEY, mode); } catch (e) {}
+      }
+
+      function cycle() {
+        var current = html.getAttribute('data-theme');
+        if (current === 'dark') setTheme('light');
+        else setTheme('dark');
+      }
+
+      (function init() {
+        var saved = null;
+        try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+        if (saved === 'dark' || saved === 'light') {
+          setTheme(saved);
+        } else {
+          var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          setTheme(prefersDark ? 'dark' : 'light');
+        }
+      })();
+
+      if (btn) btn.addEventListener('click', cycle);
+    })();
+  </script>
+</body>
+</html>
