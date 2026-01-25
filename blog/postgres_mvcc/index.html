@@ -42,7 +42,7 @@
     <article class="article">
       <a href="../../index.html" class="back-link">Back to home</a>
       <h1>Exploring MVCC in Postgres</h1>
-      <p class="meta">What happens when you attempt multiple DMLs on the same row</p>
+      <p class="meta">A practical example with two writes on the same row</p>
       <div class="body">
 
         <h2>Initial Example</h2>
@@ -238,6 +238,31 @@ synthetic=# SELECT n_live_tup, n_dead_tup FROM pg_stat_user_tables WHERE relname
             where VACUUM comes into play. If we don't VACUUM, we potentially
             have many dead tuples left from rolled back changes, as well
             deleted rows.
+            </p>
+        
+            <h2>The Name MVCC</h2>
+
+            <p>
+            Now we know enough to understand the name 'Multi-Version Concurrency Control'!
+            </p>
+
+            <p>
+            'Multi-Version' means what we saw just now: Postgres doesn't overwrite
+            the row, instead, it keeps multiple versions around associated with
+            each transaction. As we saw, this can include rolled back transactions.
+            </p>
+
+            <p>
+            'Concurrency Control' means that Postgres will support multiple transactions
+            at the same time, so long as they don't step on each other's toes.
+            Reads never block writes and writes never block reads. The only time 
+            we run into trouble is in the exact case we're discussing here, with
+            two writes on the same row.
+            </p>
+
+            <p>
+            Now, we still haven't discussed snapshots or the conceptual model of MVCC,
+            but this got our hands dirty with a practical example of MVCC in action.
             </p>
 
       </div>
