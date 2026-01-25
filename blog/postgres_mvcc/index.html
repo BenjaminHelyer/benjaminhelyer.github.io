@@ -163,6 +163,61 @@ SELECT xmin, xmax, character_id, age FROM characters WHERE character_id = 'c_002
         on the table.
         </p>
 
+        <h2>What happens during Session A's transaction?</h2>
+
+        We might think that, during Session A's transaction,
+        the updated record is only kept in-memory by Postgres
+        and never recorded on disk. However, this isn't necessarily the case.
+
+        <p>
+        We start by opening a transaction and updating the row, then rollback immediately.
+        </p>
+
+        <pre><code>synthetic=# BEGIN;
+BEGIN
+synthetic=*# UPDATE characters SET age = 33 WHERE character_id = 'c_002';
+UPDATE 1
+synthetic=*# ROLLBACK;
+ROLLBACK
+        </code></pre>
+        
+        <p>
+        OK, so no changes, right? Wrong!
+        Querying <code>pg_stat_user_tables</code> after the rollback shows one dead tuple.
+        </p>
+
+        <pre><code>
+synthetic=# SELECT n_live_tup, n_dead_tup FROM pg_stat_user_tables WHERE relname = 'characters';
+ n_live_tup | n_dead_tup 
+------------+------------
+          3 |          1
+(1 row)</code></pre>
+
+        <p>
+        We can clean up this dead tuple by VACUUMing the table.
+        </p>
+
+        <pre><code>
+synthetic=# VACUUM;
+VACUUM
+        </code></pre>
+
+        <p>
+        Checking on the dead tuple count again, we see it's now zero.
+        </p>
+
+        <pre><code>
+synthetic=# SELECT n_live_tup, n_dead_tup FROM pg_stat_user_tables WHERE relname = 'characters';
+ n_live_tup | n_dead_tup 
+------------+------------
+          3 |          0
+(1 row)</code></pre>
+
+            <p>
+            Thus, when we begin a transaction, the tuples are kept around,
+            even though they aren't committed.
+            </p>
+
       </div>
     </article>
   </div>
